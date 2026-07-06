@@ -1,0 +1,40 @@
+{
+    "serial": {
+        "port": "/dev/ttyUSB1",
+        "baudrate": 9600,
+        "bytesize": 8,
+        "parity": "N",
+        "stopbits": 1,
+        "timeout": 1.0
+    },
+    "modbus": {
+        "slave_id": 1,
+        "retries": 3,
+        "retry_delay_seconds": 1.0
+    },
+    "test": {
+        "temperature_range_c": [10, 15, 20, 25, 30, 35, 40, 45, 50],
+        "dwell_time_seconds": 30,
+        "stabilization_tolerance_c": 0.5,
+        "stabilization_min_time_seconds": 10,
+        "max_stabilization_wait_seconds": 300,
+        "poll_interval_seconds": 2.0,
+        "safety_high_limit_c": 50,
+        "safety_low_limit_c": 10,
+        "cooldown_enabled": true,
+        "cooldown_target_c": 25.0,
+        "cooldown_timeout_seconds": 600
+    },
+    "web": {
+        "host": "0.0.0.0",
+        "port": 5000,
+        "poll_interval_seconds": 2.0,
+        "history_points": 300
+    },
+    "output": {
+        "log_dir": "logs",
+        "csv_log": true,
+        "console_log": true,
+        "report_file": "test_report.txt"
+    }
+}

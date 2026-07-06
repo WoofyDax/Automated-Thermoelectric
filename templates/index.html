@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TestEquity TEC1 — Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a;
+    --text: #e1e4ed; --dim: #8b8fa3;
+    --accent: #3b82f6; --green: #22c55e; --red: #ef4444; --warn: #f59e0b;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 20px; flex-wrap: wrap; gap: 10px;
+  }
+  .header h1 { font-size: 1.5rem; font-weight: 600; }
+  .header h1 span { color: var(--accent); }
+
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: 0.75rem; font-weight: 600;
+  }
+  .badge.online { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge.offline { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge.testing { background: rgba(59,130,246,0.15); color: var(--accent); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr));
+    gap: 16px; margin-bottom: 20px;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px;
+  }
+  .card h3 {
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--dim); margin-bottom: 8px;
+  }
+  .card .value { font-size: 2.2rem; font-weight: 700; }
+  .card .unit { font-size: 0.9rem; color: var(--dim); font-weight: 400; }
+  .card .sub { font-size: 0.8rem; color: var(--dim); margin-top: 4px; }
+
+  .chart-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px;
+    position: relative; height: 380px; overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .chart-box canvas { width: 100% !important; height: 100% !important; }
+
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    padding: 10px 18px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); color: var(--text); cursor: pointer;
+    font-size: 0.875rem; font-weight: 500; transition: all 0.15s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { background: var(--red); border-color: var(--red); color: #fff; }
+  .btn.success { background: var(--green); border-color: var(--green); color: #fff; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .setpoint-input {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; color: var(--text); font-size: 1rem; font-weight: 600;
+    width: 120px; text-align: center;
+  }
+  .setpoint-input:focus { outline: none; border-color: var(--accent); }
+
+  .preset-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .preset-btn {
+    padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: transparent; color: var(--dim); cursor: pointer;
+    font-size: 0.8rem; transition: all 0.15s;
+  }
+  .preset-btn:hover { border-color: var(--accent); color: var(--text); }
+
+  .progress-bar {
+    width: 100%; height: 8px; background: var(--border); border-radius: 4px;
+    margin-top: 10px; overflow: hidden;
+  }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s ease; }
+
+  .log-list {
+    max-height: 180px; overflow-y: auto;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem;
+  }
+  .log-entry { padding: 3px 0; border-bottom: 1px solid var(--border); color: var(--dim); }
+  .log-entry.error { color: var(--red); }
+  .log-entry.success { color: var(--green); }
+  .log-entry.info { color: var(--accent); }
+
+  .test-results-table {
+    width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem;
+  }
+  .test-results-table th, .test-results-table td {
+    padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border);
+  }
+  .test-results-table th { color: var(--dim); font-weight: 500; }
+  .result-pass { color: var(--green); font-weight: 600; }
+  .result-fail { color: var(--red); font-weight: 600; }
+
+  .section-title {
+    font-size: 1rem; font-weight: 600; margin: 24px 0 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .note {
+    font-size: 0.8rem; color: var(--warn); padding: 8px 12px;
+    background: rgba(245,158,11,0.1); border-radius: 6px; margin-bottom: 16px;
+  }
+
+  @media (max-width: 600px) {
+    .card .value { font-size: 1.6rem; }
+    .chart-box { height: 260px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>TestEquity <span>TEC1</span> Dashboard</h1>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <span id="connection-badge" class="badge offline">● Disconnected</span>
+    <span id="test-badge" class="badge" style="display:none;">◉ Testing</span>
+  </div>
+</div>
+
+<div class="note">
+  ⚠ <strong>POWER</strong> and <strong>TEMP</strong> switches must be physically ON.
+  RS-232 only sets the target temperature and reads back values.
+</div>
+
+<!-- Status Cards -->
+<div class="grid">
+  <div class="card">
+    <h3>Chamber Temperature</h3>
+    <div class="value" id="pv-display">---<span class="unit">°C</span></div>
+    <div class="sub" id="pv-time">Waiting…</div>
+  </div>
+  <div class="card">
+    <h3>Setpoint</h3>
+    <div class="value" id="sp-display">---<span class="unit">°C</span></div>
+    <div class="sub" id="sp-delta"></div>
+  </div>
+  <div class="card">
+    <h3>Status</h3>
+    <div class="value" style="font-size:1.4rem;" id="status-text">
+      <span id="test-step-display">Idle</span>
+    </div>
+    <div class="sub" id="test-sub"></div>
+  </div>
+</div>
+
+<!-- Chart -->
+<div class="chart-box">
+  <h3 style="margin-bottom:8px;color:var(--dim);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;">Temperature History</h3>
+  <canvas id="tempChart"></canvas>
+</div>
+
+<!-- Setpoint Control -->
+<div class="section-title">🎯 Setpoint Control</div>
+<div class="card">
+  <div class="controls">
+    <input type="number" id="setpoint-input" class="setpoint-input" value="25" step="0.1">
+    <span style="color:var(--dim);font-weight:600;">°C</span>
+    <button class="btn primary" onclick="setSetpoint()">Set</button>
+  </div>
+  <div class="preset-row">
+    <button class="preset-btn" onclick="quickSet(10)">10°C</button>
+    <button class="preset-btn" onclick="quickSet(15)">15°C</button>
+    <button class="preset-btn" onclick="quickSet(20)">20°C</button>
+    <button class="preset-btn" onclick="quickSet(25)">25°C</button>
+    <button class="preset-btn" onclick="quickSet(30)">30°C</button>
+    <button class="preset-btn" onclick="quickSet(35)">35°C</button>
+    <button class="preset-btn" onclick="quickSet(40)">40°C</button>
+    <button class="preset-btn" onclick="quickSet(45)">45°C</button>
+    <button class="preset-btn" onclick="quickSet(50)">50°C</button>
+  </div>
+</div>
+
+<!-- Test Runner -->
+<div class="section-title">🧪 Temperature Sweep Test</div>
+<div class="card">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <button class="btn success" id="btn-test-start" onclick="startTest()">▶ Start Test</button>
+    <button class="btn danger" id="btn-test-stop" onclick="stopTest()" disabled>⏹ Stop</button>
+  </div>
+  <div class="progress-bar" id="test-progress-bar" style="display:none;">
+    <div class="progress-fill" id="test-progress-fill" style="width:0%;"></div>
+  </div>
+  <div id="test-log" class="log-list" style="margin-top:10px;"></div>
+  <table class="test-results-table" id="test-results-table" style="display:none;">
+    <thead><tr><th>Step</th><th>Target</th><th>Result</th><th>PV</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<div style="text-align:center;margin-top:30px;color:var(--dim);font-size:0.75rem;">
+  TestEquity TEC1 &nbsp;|&nbsp; EZ-Zone PM &bull; RS-232C &bull; Modbus RTU &bull; Reg 360/2160
+</div>
+
+<script>
+// ── Chart ────────────────────────────────────────────────────────────────
+const ctx = document.getElementById('tempChart').getContext('2d');
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label: 'Chamber', data: [], borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.08)', fill: true,
+        tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'Setpoint', data: [], borderColor: '#8b8fa3',
+        borderDash: [5,5], tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 300 },
+    plugins: { legend: { labels: { color: '#8b8fa3', usePointStyle: true } } },
+    scales: {
+      x: { ticks: { color: '#8b8fa3', maxTicksLimit: 8, maxRotation: 0 },
+           grid: { color: 'rgba(42,45,58,0.4)' } },
+      y: { min: 5, max: 55,
+           ticks: { color: '#8b8fa3', callback: v => v + '°C', stepSize: 20 },
+           grid: { color: 'rgba(42,45,58,0.4)' } }
+    },
+    interaction: { intersect: false, mode: 'index' }
+  }
+});
+
+// ── SocketIO ─────────────────────────────────────────────────────────────
+const socket = io();
+socket.on('connect', () => console.log('WS connected'));
+
+socket.on('status', (data) => {
+  updateDisplay(data);
+  if (data.pv_c != null) {
+    const now = new Date().toLocaleTimeString();
+    chart.data.labels.push(now);
+    chart.data.datasets[0].data.push(data.pv_c);
+    chart.data.datasets[1].data.push(data.setpoint_c != null ? data.setpoint_c : NaN);
+    if (chart.data.labels.length > 300) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+      chart.data.datasets[1].data.shift();
+    }
+    chart.update('none');
+  }
+});
+
+socket.on('history', (points) => {
+  chart.data.labels = points.map(p => new Date(p.t).toLocaleTimeString());
+  chart.data.datasets[0].data = points.map(p => p.pv);
+  chart.data.datasets[1].data = points.map(p => p.sp);
+  chart.update('none');
+});
+
+socket.on('test_event', (evt) => {
+  const log = document.getElementById('test-log');
+  const e = document.createElement('div');
+  e.className = 'log-entry ' + (evt.type === 'step_failed' || evt.type === 'error' ? 'error' :
+               evt.type === 'step_complete' || evt.type === 'complete' ? 'success' : 'info');
+  e.textContent = evt.message || JSON.stringify(evt);
+  log.prepend(e);
+
+  if (evt.type === 'step_start') {
+    document.getElementById('test-progress-bar').style.display = 'block';
+    document.getElementById('test-progress-fill').style.width = ((evt.step-1)/evt.total*100)+'%';
+  }
+  if (evt.type === 'step_complete') {
+    document.getElementById('test-progress-fill').style.width = (evt.step/evt.total*100)+'%';
+  }
+  if (evt.type === 'complete') {
+    document.getElementById('test-progress-bar').style.display = 'none';
+    showResults(evt.results);
+  }
+  if (evt.type === 'aborted' || evt.type === 'error') {
+    document.getElementById('test-progress-bar').style.display = 'none';
+  }
+  updateTestButtons(evt);
+});
+
+// ── Display ──────────────────────────────────────────────────────────────
+function updateDisplay(data) {
+  const conn = document.getElementById('connection-badge');
+  conn.className = data.connected ? 'badge online' : 'badge offline';
+  conn.textContent = data.connected ? '● Connected' : '● Disconnected';
+
+  const pv = data.pv_c != null ? data.pv_c.toFixed(1) : '---';
+  document.getElementById('pv-display').innerHTML = pv + '<span class="unit">°C</span>';
+  document.getElementById('pv-time').textContent = data.timestamp ?
+    new Date(data.timestamp).toLocaleTimeString() : '';
+
+  const sp = data.setpoint_c != null ? data.setpoint_c.toFixed(1) : '---';
+  document.getElementById('sp-display').innerHTML = sp + '<span class="unit">°C</span>';
+
+  if (data.pv_c != null && data.setpoint_c != null) {
+    const delta = (data.pv_c - data.setpoint_c).toFixed(1);
+    document.getElementById('sp-delta').textContent = 'Δ ' + (delta>0?'+':'') + delta + '°C';
+  }
+
+  document.getElementById('test-step-display').textContent = data.test_step || 'Idle';
+  document.getElementById('test-sub').textContent = data.test_running ? 'Test running…' : '';
+
+  const tb = document.getElementById('test-badge');
+  if (data.test_running) {
+    tb.style.display = 'inline-block'; tb.className = 'badge testing';
+    tb.textContent = '◉ ' + (data.test_step || 'Testing');
+  } else {
+    tb.style.display = 'none';
+  }
+}
+
+function updateTestButtons(evt) {
+  const done = evt.type === 'complete' || evt.type === 'aborted' || evt.type === 'error';
+  document.getElementById('btn-test-start').disabled = !done && evt.type !== 'complete';
+  document.getElementById('btn-test-stop').disabled = done;
+}
+
+// ── Actions ──────────────────────────────────────────────────────────────
+function setSetpoint() {
+  const val = parseFloat(document.getElementById('setpoint-input').value);
+  fetch('/api/setpoint', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({value: val})
+  }).then(r => r.json()).then(d => { if (!d.ok) alert(d.error); });
+}
+
+function quickSet(val) {
+  document.getElementById('setpoint-input').value = val;
+  setSetpoint();
+}
+
+function startTest() {
+  document.getElementById('test-log').innerHTML = '';
+  document.getElementById('test-results-table').style.display = 'none';
+  fetch('/api/test/start', {method:'POST'}).then(r => r.json()).then(d => {
+    if (!d.ok) alert(d.error);
+    else {
+      document.getElementById('btn-test-start').disabled = true;
+      document.getElementById('btn-test-stop').disabled = false;
+    }
+  });
+}
+
+function stopTest() {
+  fetch('/api/test/stop', {method:'POST'}).then(r => r.json()).then(d => {
+    document.getElementById('btn-test-start').disabled = false;
+    document.getElementById('btn-test-stop').disabled = true;
+  });
+}
+
+function showResults(results) {
+  if (!results || !results.length) return;
+  const table = document.getElementById('test-results-table');
+  table.style.display = 'table';
+  const tbody = table.querySelector('tbody');
+  tbody.innerHTML = '';
+  results.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${r.step}</td><td>${r.target}°C</td>
+      <td class="${r.stable?'result-pass':'result-fail'}">${r.stable?'✓ PASS':'✗ FAIL'}</td>
+      <td>${r.pv!=null?r.pv.toFixed(1)+'°C':'---'}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('setpoint-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') setSetpoint();
+});
+</script>
+</body>
+</html>
