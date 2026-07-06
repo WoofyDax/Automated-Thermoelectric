@@ -399,10 +399,19 @@ def main():
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--pi", action="store_true",
+                        help="Raspberry Pi optimized settings (less RAM/CPU)")
     args = parser.parse_args()
 
     with open(args.config) as f:
         config.update(json.load(f))
+
+    # Raspberry Pi optimizations
+    if args.pi:
+        config.setdefault("web", {})["history_points"] = 120
+        config.setdefault("web", {})["poll_interval_seconds"] = 3.0
+        config.setdefault("test", {})["poll_interval_seconds"] = 3.0
+        logger.info("Raspberry Pi mode: history=120, poll=3s")
 
     history_size = config.get("web", {}).get("history_points", 300)
     global temp_history
