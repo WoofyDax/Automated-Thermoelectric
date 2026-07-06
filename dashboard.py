@@ -376,6 +376,28 @@ def on_request_status():
 # Startup
 # ---------------------------------------------------------------------------
 
+class MockClient:
+    def __init__(self):
+        self.is_connected = True
+        self._setpoint = 25.0
+        self._pv = 24.5
+
+    def get_process_value(self):
+        import random
+        self._pv += random.uniform(-0.2, 0.2)
+        return round(self._pv, 1)
+
+    def get_setpoint(self):
+        return self._setpoint
+
+    def set_setpoint(self, value):
+        self._setpoint = value
+        return True
+
+    def disconnect(self):
+        self.is_connected = False
+
+
 def connect_on_startup():
     global client, config
     try:
@@ -387,9 +409,13 @@ def connect_on_startup():
             logger.info("Connected to EZ-Zone on %s", sc["port"])
             start_poller()
         else:
-            logger.warning("Could not connect — dashboard will start disconnected.")
+            logger.warning("Could not connect — using demo mode with simulated data.")
+            client = MockClient()
+            start_poller()
     except Exception as e:
-        logger.warning("Startup connect failed: %s", e)
+        logger.warning("Startup connect failed: %s — using demo mode.", e)
+        client = MockClient()
+        start_poller()
 
 
 def main():
