@@ -152,6 +152,7 @@
     <h3>Setpoint</h3>
     <div class="value" id="sp-display">---<span class="unit">°C</span></div>
     <div class="sub" id="sp-delta"></div>
+    <div class="sub" id="idle-sp-display"></div>
   </div>
   <div class="card">
     <h3>Status</h3>
@@ -159,6 +160,21 @@
       <span id="test-step-display">Idle</span>
     </div>
     <div class="sub" id="test-sub"></div>
+  </div>
+  <div class="card">
+    <h3>Control Mode</h3>
+    <div class="value" style="font-size:1.4rem;" id="mode-display">---</div>
+    <div class="sub" id="output-display">Loop output ---</div>
+  </div>
+  <div class="card">
+    <h3>Heat Power</h3>
+    <div class="value" id="heat-display">---<span class="unit">%</span></div>
+    <div class="sub">Output 1 command</div>
+  </div>
+  <div class="card">
+    <h3>Cool Power</h3>
+    <div class="value" id="cool-display">---<span class="unit">%</span></div>
+    <div class="sub">Output 2 command</div>
   </div>
 </div>
 
@@ -189,6 +205,30 @@
   </div>
 </div>
 
+<!-- Idle Setpoint Control -->
+<div class="section-title">💤 Idle Setpoint</div>
+<div class="card">
+  <div class="controls">
+    <input type="number" id="idle-sp-input" class="setpoint-input" value="25" step="0.1">
+    <span style="color:var(--dim);font-weight:600;">°C</span>
+    <button class="btn primary" onclick="setIdleSetpoint()">Set Idle SP</button>
+    <button class="btn" onclick="loadIdleSetpoint()">Read Current</button>
+  </div>
+  <div class="sub" id="idle-sp-result" style="margin-top:6px;"></div>
+</div>
+
+<!-- Controller Control -->
+<div class="section-title">Controller Mode</div>
+<div class="card">
+  <div class="controls">
+    <button class="btn primary" onclick="setControlMode('auto')">Auto</button>
+    <button class="btn danger" onclick="setControlMode('off')">Off</button>
+    <button class="btn" onclick="loadCoolingConfig()">Read Cooling Setup</button>
+    <button class="btn" onclick="configureCooling()">Restore TEC1 Cooling Setup</button>
+  </div>
+  <div class="log-list" id="cooling-config" style="margin-top:10px;"></div>
+</div>
+
 <!-- Test Runner -->
 <div class="section-title">🧪 Temperature Sweep Test</div>
 <div class="card">
@@ -207,7 +247,7 @@
 </div>
 
 <div style="text-align:center;margin-top:30px;color:var(--dim);font-size:0.75rem;">
-  TestEquity TEC1 &nbsp;|&nbsp; EZ-Zone PM &bull; RS-232C &bull; Modbus RTU &bull; Reg 360/2160
+  TestEquity TEC1 &nbsp;|&nbsp; EZ-Zone PM &bull; RS-232C &bull; Modbus RTU &bull; PV 360 &bull; SP 2160
 </div>
 
 <script>
@@ -309,10 +349,21 @@ function updateDisplay(data) {
   if (data.pv_c != null && data.setpoint_c != null) {
     const delta = (data.pv_c - data.setpoint_c).toFixed(1);
     document.getElementById('sp-delta').textContent = 'Δ ' + (delta>0?'+':'') + delta + '°C';
+  } else {
+    document.getElementById('sp-delta').textContent = '';
   }
+  document.getElementById('idle-sp-display').textContent =
+    data.idle_setpoint_c != null ? 'Idle SP ' + data.idle_setpoint_c.toFixed(1) + '°C' : '';
 
   document.getElementById('test-step-display').textContent = data.test_step || 'Idle';
   document.getElementById('test-sub').textContent = data.test_running ? 'Test running…' : '';
+  document.getElementById('mode-display').textContent = data.control_mode_name || '---';
+  document.getElementById('heat-display').innerHTML =
+    formatPercent(data.heat_output_pct) + '<span class="unit">%</span>';
+  document.getElementById('cool-display').innerHTML =
+    formatPercent(data.cool_output_pct) + '<span class="unit">%</span>';
+  document.getElementById('output-display').textContent =
+    'Loop output ' + formatPercent(data.loop_output_pct) + '%';
 
   const tb = document.getElementById('test-badge');
   if (data.test_running) {
@@ -321,6 +372,10 @@ function updateDisplay(data) {
   } else {
     tb.style.display = 'none';
   }
+}
+
+function formatPercent(value) {
+  return value != null && Number.isFinite(value) ? value.toFixed(1) : '---';
 }
 
 function updateTestButtons(evt) {
@@ -341,6 +396,76 @@ function setSetpoint() {
 function quickSet(val) {
   document.getElementById('setpoint-input').value = val;
   setSetpoint();
+}
+
+function setControlMode(mode) {
+  fetch('/api/control/' + mode, {method:'POST'}).then(r => r.json()).then(d => {
+    if (!d.ok) alert(d.error || 'Mode change failed');
+  });
+}
+
+function setIdleSetpoint() {
+  const val = parseFloat(document.getElementById('idle-sp-input').value);
+  fetch('/api/idle-setpoint', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({value: val})
+  }).then(r => r.json()).then(d => {
+    const el = document.getElementById('idle-sp-result');
+    if (d.ok) {
+      el.textContent = 'Idle setpoint set to ' + d.idle_setpoint_c.toFixed(1) + '°C';
+      el.style.color = 'var(--green)';
+    } else {
+      el.textContent = 'Failed: ' + (d.error || 'unknown');
+      el.style.color = 'var(--red)';
+    }
+  });
+}
+
+function loadIdleSetpoint() {
+  fetch('/api/idle-setpoint').then(r => r.json()).then(d => {
+    const el = document.getElementById('idle-sp-result');
+    if (d.ok) {
+      document.getElementById('idle-sp-input').value = d.idle_setpoint_c;
+      el.textContent = 'Current idle SP: ' + d.idle_setpoint_c.toFixed(1) + '°C';
+      el.style.color = 'var(--dim)';
+    } else {
+      el.textContent = 'Failed: ' + (d.error || 'unknown');
+      el.style.color = 'var(--red)';
+    }
+  });
+}
+
+function loadCoolingConfig() {
+  fetch('/api/cooling/config').then(r => r.json()).then(d => {
+    const box = document.getElementById('cooling-config');
+    if (!d.ok) {
+      box.innerHTML = '<div class="log-entry error">' + (d.error || 'Read failed') + '</div>';
+      return;
+    }
+    box.innerHTML = [
+      'Control active: ' + d.control_mode_active + ' (10=Auto, 54=Manual, 62=Off)',
+      'Cool algorithm: ' + d.cool_algorithm + ' (71=PID, 64=On-Off, 62=Off)',
+      'Output 1 function: ' + d.output_1_function + ' (36=Heat)',
+      'Output 2 function: ' + d.output_2_function + ' (20=Cool)',
+      'Output 1 power: ' + formatPercent(d.output_1_power_pct) + '%',
+      'Output 2 power: ' + formatPercent(d.output_2_power_pct) + '%'
+    ].map(line => '<div class="log-entry info">' + line + '</div>').join('');
+  });
+}
+
+function configureCooling() {
+  const ok = confirm('This writes EEPROM-backed controller setup registers: Auto mode, Cool Algorithm PID, Output 1 Heat, Output 2 Cool. Continue?');
+  if (!ok) return;
+  fetch('/api/cooling/configure', {method:'POST'}).then(r => r.json()).then(d => {
+    const box = document.getElementById('cooling-config');
+    if (!d.ok) {
+      box.innerHTML = '<div class="log-entry error">One or more setup writes failed.</div>';
+    }
+    const rows = Object.entries(d.writes || {}).map(([k, v]) =>
+      '<div class="log-entry ' + (v ? 'success' : 'error') + '">' + k + ': ' + (v ? 'ok' : 'failed') + '</div>'
+    );
+    box.innerHTML = rows.join('');
+  });
 }
 
 function startTest() {

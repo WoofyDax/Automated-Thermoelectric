@@ -3,7 +3,7 @@
 TestEquity TEC1 — Web Dashboard
 
 Flask + SocketIO dashboard for the TEC1 thermoelectric chamber.
-Reads PV (register 360) and writes setpoint (register 2160) via Modbus RTU.
+Reads PV (register 360) and writes closed-loop setpoint (register 2160) via Modbus RTU.
 
 IMPORTANT: POWER and TEMP switches must be physically ON.
 RS-232 only sets the target temperature and reads back values.
@@ -52,6 +52,22 @@ test_current_step: str = "idle"
 logger = logging.getLogger("dashboard")
 
 
+def dashboard_status_payload() -> dict:
+    """Return controller status using the web dashboard's existing field names."""
+    status = client.get_status()
+    return {
+        "pv_c": status.get("process_value_c"),
+        "setpoint_c": status.get("setpoint_c"),
+        "active_setpoint_c": status.get("active_setpoint_c"),
+        "idle_setpoint_c": status.get("idle_setpoint_c"),
+        "control_mode": status.get("control_mode"),
+        "control_mode_name": status.get("control_mode_name"),
+        "heat_output_pct": status.get("heat_output_pct"),
+        "cool_output_pct": status.get("cool_output_pct"),
+        "loop_output_pct": status.get("loop_output_pct"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Background Poller
 # ---------------------------------------------------------------------------
@@ -63,20 +79,22 @@ def poller_loop():
     while poller_running:
         if client and client.is_connected:
             try:
-                pv = client.get_process_value()
-                sp = client.get_setpoint()
+                # Single get_status() call reads all registers at once,
+                # avoiding field drift between the poller and api_status.
+                s = client.get_status()
 
                 now = datetime.now(timezone.utc).isoformat()
 
                 status = {
                     "timestamp": now,
-                    "pv_c": pv,
-                    "setpoint_c": sp,
+                    **dashboard_status_payload(),
                     "connected": True,
                     "test_running": test_running,
                     "test_step": test_current_step,
                 }
 
+                pv = s.get("process_value_c")
+                sp = s.get("setpoint_c")
                 if pv is not None:
                     temp_history.append({"t": now, "pv": pv, "sp": sp})
 
@@ -227,8 +245,7 @@ def api_status():
     try:
         return jsonify({
             "connected": True,
-            "pv_c": client.get_process_value(),
-            "setpoint_c": client.get_setpoint(),
+            **dashboard_status_payload(),
             "test_running": test_running,
             "test_step": test_current_step,
         })
@@ -252,6 +269,54 @@ def api_set_setpoint():
 
     ok = client.set_setpoint(value)
     return jsonify({"ok": ok, "setpoint": value})
+
+
+@app.route("/api/control/auto", methods=["POST"])
+def api_control_auto():
+    global client
+    if not client or not client.is_connected:
+        return jsonify({"ok": False, "error": "Not connected"}), 503
+    ok = client.enable_control()
+    return jsonify({"ok": ok, "mode": "auto"})
+
+
+@app.route("/api/control/off", methods=["POST"])
+def api_control_off():
+    global client
+    if not client or not client.is_connected:
+        return jsonify({"ok": False, "error": "Not connected"}), 503
+    ok = client.disable_control()
+    return jsonify({"ok": ok, "mode": "off"})
+
+
+@app.route("/api/idle-setpoint", methods=["GET", "POST"])
+def api_idle_setpoint():
+    global client
+    if not client or not client.is_connected:
+        return jsonify({"ok": False, "error": "Not connected"}), 503
+    if request.method == "GET":
+        return jsonify({"ok": True, "idle_setpoint_c": client.get_idle_setpoint()})
+    data = request.get_json()
+    value = float(data.get("value", 25.0))
+    ok = client.set_idle_setpoint(value)
+    return jsonify({"ok": ok, "idle_setpoint_c": value})
+
+
+@app.route("/api/cooling/config")
+def api_cooling_config():
+    global client
+    if not client or not client.is_connected:
+        return jsonify({"ok": False, "error": "Not connected"}), 503
+    return jsonify({"ok": True, **client.get_cooling_config()})
+
+
+@app.route("/api/cooling/configure", methods=["POST"])
+def api_configure_cooling():
+    global client
+    if not client or not client.is_connected:
+        return jsonify({"ok": False, "error": "Not connected"}), 503
+    results = client.configure_tec1_cooling()
+    return jsonify({"ok": all(results.values()), "writes": results})
 
 
 @app.route("/api/connect", methods=["POST"])
@@ -362,8 +427,7 @@ def on_request_status():
         try:
             emit("status", {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "pv_c": client.get_process_value(),
-                "setpoint_c": client.get_setpoint(),
+                **dashboard_status_payload(),
                 "connected": True,
                 "test_running": test_running,
                 "test_step": test_current_step,
@@ -394,6 +458,65 @@ class MockClient:
         self._setpoint = value
         return True
 
+    def get_idle_setpoint(self):
+        return 27.0
+
+    def set_idle_setpoint(self, value):
+        return True
+
+    def get_control_mode(self):
+        return 10
+
+    def get_heat_output(self):
+        return max(0.0, round((self._setpoint - self._pv) * 12.0, 1))
+
+    def get_cool_output(self):
+        return min(0.0, round((self._setpoint - self._pv) * 12.0, 1))
+
+    def get_loop_output(self):
+        return round((self._setpoint - self._pv) * 12.0, 1)
+
+    def get_status(self):
+        return {
+            "process_value_c": self.get_process_value(),
+            "setpoint_c": self.get_setpoint(),
+            "active_setpoint_c": self.get_setpoint(),
+            "idle_setpoint_c": 27.0,
+            "control_mode": self.get_control_mode(),
+            "control_mode_name": "Auto",
+            "heat_output_pct": self.get_heat_output(),
+            "cool_output_pct": self.get_cool_output(),
+            "loop_output_pct": self.get_loop_output(),
+        }
+
+    @staticmethod
+    def control_mode_name(mode):
+        return "Auto" if mode == 10 else "Unknown"
+
+    def enable_control(self):
+        return True
+
+    def disable_control(self):
+        return True
+
+    def get_cooling_config(self):
+        return {
+            "control_mode_active": 10,
+            "cool_algorithm": 71,
+            "output_1_function": 36,
+            "output_2_function": 20,
+            "output_1_power_pct": 0.0,
+            "output_2_power_pct": 0.0,
+        }
+
+    def configure_tec1_cooling(self):
+        return {
+            "control_mode_auto": True,
+            "cool_algorithm_pid": True,
+            "output_1_heat": True,
+            "output_2_cool": True,
+        }
+
     def disconnect(self):
         self.is_connected = False
 
@@ -407,6 +530,10 @@ def connect_on_startup():
                               retries=mc["retries"], retry_delay=mc["retry_delay_seconds"])
         if client.connect():
             logger.info("Connected to EZ-Zone on %s", sc["port"])
+            if client.enable_control():
+                logger.info("Enabled closed-loop (AUTO) control mode.")
+            else:
+                logger.warning("Could not enable AUTO mode — controller may be in manual.")
             start_poller()
         else:
             logger.warning("Could not connect — using demo mode with simulated data.")

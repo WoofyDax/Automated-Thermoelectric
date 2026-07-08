@@ -233,13 +233,12 @@ def run_tests(config_path: str) -> bool:
     try:
         # Initial status
         status = client.get_status()
-        log.info("Initial status: PV=%.2f °C  SP=%.2f °C  Mode=%s  Heat=%.1f%%  Cool=%.1f%%  Alarm=%s",
+        log.info("Initial status: PV=%.2f °C  SP=%.2f °C  Mode=%s  Heat=%.1f%%  Cool=%.1f%%",
                  status["process_value_c"],
                  status["active_setpoint_c"],
                  client.control_mode_name(status["control_mode"]),
                  status["heat_output_pct"],
-                 status["cool_output_pct"],
-                 status["alarm_status"])
+                 status["cool_output_pct"])
 
         # Enable control
         if not client.enable_control():
@@ -346,13 +345,12 @@ def run_tests(config_path: str) -> bool:
         # ------------------------------------------------------------------
         status = client.get_status()
         log.info("=" * 60)
-        log.info("Final status: PV=%.2f °C  SP=%.2f °C  Mode=%s  Heat=%.1f%%  Cool=%.1f%%  Alarm=%s",
+        log.info("Final status: PV=%.2f °C  SP=%.2f °C  Mode=%s  Heat=%.1f%%  Cool=%.1f%%",
                  status["process_value_c"],
                  status["active_setpoint_c"],
                  client.control_mode_name(status["control_mode"]),
                  status["heat_output_pct"],
-                 status["cool_output_pct"],
-                 status["alarm_status"])
+                 status["cool_output_pct"])
 
         total_elapsed = time.monotonic() - test_start
         log.info("Total test duration: %.0f s (%.1f min)", total_elapsed, total_elapsed / 60)
